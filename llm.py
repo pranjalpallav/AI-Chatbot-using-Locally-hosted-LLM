@@ -1,13 +1,31 @@
-"""Prompt building + streaming from a local Ollama model (thinking hidden)."""
+"""Prompt building + streaming from a free hosted LLM API (OpenAI-compatible)."""
 import os
 import time
 
-import ollama
+from dotenv import load_dotenv
+from openai import OpenAI
 
 from utils import strip_think
 
-MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
-OPTIONS = {"num_ctx": 6144, "temperature": 0.3}
+load_dotenv()
+
+def _cfg(name: str, default: str = "") -> str:
+    """Read a setting from env/.env (local) or Streamlit secrets (Streamlit Cloud)."""
+    val = os.getenv(name)
+    if val:
+        return val
+    try:
+        import streamlit as st
+        return str(st.secrets.get(name, default))
+    except Exception:
+        return default
+
+
+# Defaults to Groq's free tier. Change these in .env / Streamlit secrets to use another provider.
+API_KEY = _cfg("LLM_API_KEY")
+BASE_URL = _cfg("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+MODEL = _cfg("LLM_MODEL", "llama-3.3-70b-versatile")
+TEMPERATURE = 0.3
 
 
 def _today() -> str:
@@ -36,7 +54,7 @@ def _label(h: dict) -> str:
 
 
 def build_messages(question: str, hits: list[dict], history: list[dict]) -> list[dict]:
-    history = [{"role": m["role"], "content": m["content"]} for m in history[-6:]]
+    history = [{"role": m["role"], "content": m["content"]} for m in history[-10:]]
     if not hits:   # plain chat
         return [{"role": "system", "content": chat_system()}, *history,
                 {"role": "user", "content": question}]
@@ -46,20 +64,22 @@ def build_messages(question: str, hits: list[dict], history: list[dict]) -> list
 
 
 def _raw_stream(messages: list[dict]):
-    client = ollama.Client()
+    if not API_KEY:
+        yield ("⚠️ No API key found. Set `LLM_API_KEY` in a `.env` file (local) or in Streamlit "
+               "Secrets (cloud), then restart the app.")
+        return
+    client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
     try:
-        stream = client.chat(model=MODEL, messages=messages, stream=True,
-                             options=OPTIONS, think=False)
-    except TypeError:                      # old ollama python package without `think`
-        messages = [*messages[:-1],
-                    {**messages[-1], "content": messages[-1]["content"] + " /no_think"}]
-        stream = client.chat(model=MODEL, messages=messages, stream=True, options=OPTIONS)
-    except ollama.ResponseError:           # model doesn't support the think flag
-        stream = client.chat(model=MODEL, messages=messages, stream=True, options=OPTIONS)
-    for chunk in stream:
-        piece = chunk["message"]["content"]
-        if piece:
-            yield piece
+        stream = client.chat.completions.create(
+            model=MODEL, messages=messages, stream=True, temperature=TEMPERATURE)
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            piece = chunk.choices[0].delta.content
+            if piece:
+                yield piece
+    except Exception as e:      # rate limit, bad key, network, wrong model name...
+        yield f"\n\n⚠️ LLM API error: {str(e)[:300]}"
 
 
 def stream_answer(messages: list[dict]):
