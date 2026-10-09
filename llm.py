@@ -24,7 +24,7 @@ def _cfg(name: str, default: str = "") -> str:
 # Defaults to Groq's free tier. Change these in .env / Streamlit secrets to use another provider.
 API_KEY = _cfg("LLM_API_KEY")
 BASE_URL = _cfg("LLM_BASE_URL", "https://api.groq.com/openai/v1")
-MODEL = _cfg("LLM_MODEL", "llama-3.3-70b-versatile")
+MODEL = _cfg("LLM_MODEL", "qwen/qwen3.8-27b")
 TEMPERATURE = 0.3
 
 
